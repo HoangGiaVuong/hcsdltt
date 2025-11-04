@@ -1,0 +1,41 @@
+version: '3.7'
+
+services:
+  # --- PHẦN KAFKA TỪ TRƯỚC ---
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:2092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  # --- PHẦN POSTGRESQL MỚI THÊM ---
+  postgres:
+    image: postgres:16-alpine  # Dùng image 'alpine' cho nhẹ
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: bus_data_db
+    ports:
+      - "5432:5432" # Mở cổng 5432 để script Python có thể kết nối
+    volumes:
+      - pgdata:/var/lib/postgresql/data # Lưu dữ liệu ra ngoài container
+
+# Định nghĩa volume để dữ liệu Postgres không bị mất khi container tắt
+volumes:
+  pgdata:
