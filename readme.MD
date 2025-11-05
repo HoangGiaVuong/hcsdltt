@@ -1,85 +1,109 @@
 # Bus Data Stream — Hướng dẫn chạy (Windows)
 
-Mô tả ngắn: bộ script Python dùng Kafka để gửi/ xử lý và chèn dữ liệu vào PostgreSQL.
-Thư mục gốc: f:\ThacSi\HCSDLTT\Đồ án
+Mô tả ngắn: tập hợp script Python để giả lập phát dữ liệu từ CSV vào Kafka, xử lý luồng và chèn vào PostgreSQL.
 
-Yêu cầu
-- Docker & Docker Compose
+## Yêu cầu
+- Docker Desktop (Docker Compose)
 - Python 3.8+
-- Một terminal (PowerShell / CMD) mở tại thư mục dự án
+- PowerShell hoặc CMD (mở tại thư mục dự án)
 
-Chuẩn bị
-1. Mở PowerShell/CMD tại thư mục dự án:
+Đường dẫn dự án (ví dụ):
+f:\ThacSi\HCSDLTT\Đồ án
+
+## Chuẩn bị
+1. Mở PowerShell hoặc CMD tại thư mục dự án:
    ```powershell
    cd "f:\ThacSi\HCSDLTT\Đồ án"
    ```
 
-2. Khởi chạy Kafka + Zookeeper + Postgres:
-   ```powershell
-   docker compose up -d
-   ```
-
-3. Tạo virtual environment và cài thư viện Python:
-   - Tạo & kích hoạt venv (PowerShell):
+2. Tạo virtual environment và cài thư viện Python:
+   - Tạo & kích hoạt (PowerShell):
      ```powershell
      python -m venv .venv
      .\.venv\Scripts\Activate.ps1
      ```
-     (hoặc CMD: .\.venv\Scripts\activate.bat)
-
-   - File phụ thuộc hiện tên là `requirements.xt`. Hoặc đổi tên:
+     (Nếu dùng CMD)
+     ```cmd
+     python -m venv .venv
+     .\.venv\Scripts\activate.bat
+     ```
+   - Tạo file `requirements.txt` với nội dung:
+     ```
+     kafka-python
+     pandas
+     psycopg2-binary
+     faker
+     ```
+   - Cài đặt:
      ```powershell
-     ren requirements.xt requirements.txt
      pip install -r requirements.txt
      ```
-     Hoặc cài trực tiếp:
-     ```powershell
-     pip install -r requirements.xt
-     ```
 
-Cấu hình
-- Kiểm tra `config.ini` (bootstrap kafka, Postgres credentials, topics, đường dẫn CSV).
-- Mặc định:
-  - Kafka: localhost:9092
-  - Postgres: localhost:5432 (user=admin, password=password123, db=bus_data_db)
-  - CSV mặc định: `source.csv` (cấu hình tại [APPLICATION_SETTINGS].csv_file_path)
+3. Kiểm tra/ chỉnh config:
+   - Mở `config.ini` và đảm bảo:
+     - [KAFKA].bootstrap_servers = localhost:9092
+     - [POSTGRES] trùng với Docker Compose (user/admin, password/password123, database/bus_data_db)
+     - [APPLICATION_SETTINGS].csv_file_path trỏ tới file CSV (mặc định `source.csv`)
 
-Chạy các script (thứ tự khuyến nghị)
-1. Producer (gửi dữ liệu từ CSV tới topic raw):
+4. Khởi động hạ tầng (Kafka + Zookeeper + Postgres):
    ```powershell
-   python csv_producer.py
+   docker compose up -d
    ```
-2. Stream processor (đọc raw -> publish clean/failed):
-   ```powershell
-   python stream_processor.py
-   ```
-3. Postgres inserter (nhận dữ liệu clean -> insert vào Postgres):
+   Chờ ~20-30 giây để các service sẵn sàng.
+
+## Thứ tự chạy script (mở nhiều Terminal)
+Mở các terminal trong cùng thư mục dự án và chạy theo thứ tự sau:
+
+1. Terminal 1 — Postgres consumer (chạy thứ 2 nhưng mở terminal trước):
    ```powershell
    python postgres_consumer.py
    ```
+   (Chức năng: đọc topic clean và chèn batch vào Postgres)
 
-Kiểm tra dữ liệu trong Postgres
-- Kết nối qua psql / pgAdmin tới localhost:5432, database `bus_data_db`, user `admin`.
-- Bảng: `bus_logs` (tự tạo bởi script nếu chưa có).
+2. Terminal 2 — Stream processor:
+   ```powershell
+   python stream_processor.py
+   ```
+   (Chức năng: đọc topic raw, chuyển kiểu/dọn dữ liệu, publish sang topic clean hoặc failed)
 
-Tệp chính
-- csv_producer.py — đọc CSV, gửi event tới topic `raw_input_topic`
-- stream_processor.py — chuyển kiểu, gửi tới `clean_output_topic` hoặc `failed_output_topic`
-- postgres_consumer.py — batch insert vào Postgres
-- config.ini — cấu hình Kafka / Postgres / topics / csv path
-- docker-compose.yaml — Kafka + Zookeeper + Postgres
-- source.csv / source_data_csv.py — dữ liệu mẫu / sinh dữ liệu
+3. Terminal 3 — CSV producer (chạy cuối để bắt đầu phát dữ liệu):
+   ```powershell
+   python csv_producer.py
+   ```
+   (Chức năng: đọc `source.csv` hoặc file chỉ định trong config và gửi event tới Kafka)
 
-Troubleshooting ngắn
-- Lỗi kết nối Kafka: kiểm tra `docker compose ps` và `config.ini` bootstrap_servers.
-- Lỗi file CSV không tìm thấy: kiểm tra `csv_file_path` trong `config.ini`.
-- Lỗi Postgres: kiểm tra container Postgres đang chạy, đúng ports/credentials.
+Ghi chú: Các script sẽ chờ message nếu không có dữ liệu. Đóng bằng Ctrl+C.
 
-Dừng service Docker:
+## Kiểm tra dữ liệu trong Postgres
+Kết nối đến container Postgres và dùng psql:
 ```powershell
-docker compose down
+docker compose exec postgres psql -U admin -d bus_data_db
+```
+Trong psql:
+```sql
+SELECT COUNT(*) FROM bus_logs;
+\q
 ```
 
-Ghi chú
-- Giữ terminal đang chạy producer/processor/inserter theo thứ tự để luồng dữ liệu hoạt động.
-- Nếu cần đổi tên file phụ thuộc, dùng `ren requirements.xt requirements.txt`.
+## Dừng hạ tầng
+Khi xong, dừng và xóa container/volume:
+```powershell
+docker compose down -v
+```
+
+## Troubleshooting nhanh
+- Lỗi kết nối Kafka: kiểm tra `docker compose ps` và giá trị `bootstrap_servers` trong `config.ini` (nên là localhost:9092).
+- Producer báo không tìm file CSV: kiểm tra `csv_file_path` trong `config.ini` và đường dẫn file (`source.csv` hoặc `bus_data.csv`).
+- Postgres connection error: kiểm tra container postgres chạy, ports (5432), user/password trong `config.ini` và `docker-compose.yaml`.
+- Nếu gặp lỗi module thiếu: đảm bảo virtualenv đang active và đã pip install -r requirements.txt.
+
+## Files chính
+- csv_producer.py — gửi dữ liệu từ CSV tới topic raw
+- stream_processor.py — xử lý & publish sang topic clean/failed
+- postgres_consumer.py — nhận dữ liệu clean và insert vào Postgres
+- config.ini — cấu hình Kafka / Postgres / topics / csv path
+- docker-compose.yaml — định nghĩa Kafka, Zookeeper, Postgres
+- source.csv / source_data_csv.py — dữ liệu mẫu / script sinh dữ liệu
+
+---
+Hướng dẫn này đủ để khởi chạy luồng dữ liệu cơ bản trên máy Windows. Nếu cần thay đổi chi tiết cấu hình (ports, credentials, file names) hãy chỉnh `config.ini` và `docker-compose.yaml`.

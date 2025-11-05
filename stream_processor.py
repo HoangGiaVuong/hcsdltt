@@ -4,106 +4,108 @@ from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 from datetime import datetime
 
-# 1. Định nghĩa các "topic" (quầy bưu điện)
-# đọc từ file config.ini
+# --- Đọc file config ---
 config = configparser.ConfigParser()
 config.read('config.ini')
 
-IN_TOPIC = config['TOPICS']['raw_input_topic'] or 'bus_transactions'
-CLEAN_TOPIC = config['TOPICS']['clean_output_topic'] or 'bus_transactions_clean'
-FAILED_TOPIC = config['TOPICS']['failed_output_topic'] or 'bus_transactions_failed'
-# đọc cấu hình Kafka từ file config
-KAFKA_BROKERS = config['KAFKA']['bootstrap_servers'] or 'localhost:9092'
-GROUP_ID = config['CONSUMER_GROUPS']['processor_group_id'] or 'bus_data_processor_group_v1'
+# --- Cấu hình Kafka ---
+IN_TOPIC = config['TOPICS']['raw_input_topic']
+CLEAN_TOPIC = config['TOPICS']['clean_output_topic']
+FAILED_TOPIC = config['TOPICS']['failed_output_topic']
+KAFKA_BROKERS = config['KAFKA']['bootstrap_servers']
+PROCESSOR_GROUP_ID = config['CONSUMER_GROUPS']['processor_group_id']
 
+# --- ĐỊNH NGHĨA CÁC NHÓM CỘT ĐỂ "DỌN DẸP" ---
+# (Dựa trên dữ liệu mẫu của bạn)
 
+# Các cột sẽ được chuyển đổi: "1.0" -> 1 (int)
+FLOAT_TO_INT_COLS = ['direction', 'stopEndSeq', 'payAmount']
 
-# 2. Định nghĩa các cột và kiểu dữ liệu
-#    Chúng ta sẽ dùng chúng để tự động chuyển đổi kiểu
-INT_COLS = ['transID', 'direction', 'stopStartSeq', 'stopEndSeq', 'payAmount']
+# Các cột sẽ được chuyển đổi: "12" -> 12 (int)
+INT_COLS = ['corridorID', 'stopStartSeq', 'payCardBirthDate'] # Thêm 'payCardBirthDate'
+
+# Các cột sẽ được chuyển đổi: "-6.193488" -> -6.193488 (float)
 FLOAT_COLS = ['tapInStopsLat', 'tapInStopsLon', 'tapOutStopsLat', 'tapOutStopsLon']
-# Các cột còn lại mặc định là chuỗi (string), không cần xử lý
 
-print("Khởi động Stream Processor...")
+# Các cột là TIMESTAMP (chuỗi ISO)
+TIMESTAMP_COLS = ['tapInTime', 'tapOutTime', 'produced_at']
+
+# Các cột còn lại mặc định là TEXT/CHUỖI
+
+# --- HÀM TIỆN ÍCH "AN TOÀN" ---
+def safe_convert(value, convert_func):
+    """Hàm chung để thử chuyển đổi, nếu thất bại thì trả về None."""
+    if value is None or value == '':
+        return None
+    try:
+        return convert_func(value)
+    except (ValueError, TypeError):
+        # Nếu giá trị là "abc" nhưng yêu cầu là int, nó sẽ trả về None
+        return None
+
+print("Khởi động Stream Processor (Phiên bản Thông minh)...")
 
 try:
-    # 3. Khởi tạo "Người tiêu thụ" (Consumer)
-    #    - Nó sẽ "nghe" từ topic 'bus_transactions'
-    #    - 'group_id' rất quan trọng. Nó giúp Kafka biết
-    #       script này đã đọc đến tin nhắn nào.
-    #    - 'auto_offset_reset='latest'': Chỉ đọc các tin nhắn MỚI NHẤT
     consumer = KafkaConsumer(
         IN_TOPIC,
         bootstrap_servers=KAFKA_BROKERS,
-        group_id=GROUP_ID,
-        # Tự động giải mã (decode) JSON từ producer
+        group_id=PROCESSOR_GROUP_ID,
         value_deserializer=lambda m: json.loads(m.decode('utf-8')),
         auto_offset_reset='latest'
     )
-
-    # 4. Khởi tạo "Người sản xuất" (Producer)
-    #    - Script này vừa "nghe" vừa "gửi".
-    #    - Nó sẽ gửi dữ liệu đã được xử lý đi
     producer = KafkaProducer(
-        bootstrap_servers= KAFKA_BROKERS,
-        # Mã hóa (encode) dữ liệu thành JSON
+        bootstrap_servers=KAFKA_BROKERS,
         value_serializer=lambda v: json.dumps(v, default=str).encode('utf-8')
     )
-
 except KafkaError as e:
-    print(f"LỖI: Không thể kết nối Kafka. Docker của bạn đang chạy chứ?")
-    print(f"Lỗi: {e}")
+    print(f"LỖI: Không thể kết nối Kafka. Docker của bạn đang chạy chứ? {e}")
     exit()
 
 print("Kết nối Kafka thành công. Đang chờ tin nhắn...")
 print(f"  - Đang nghe từ topic: {IN_TOPIC}")
-print(f"  - Sẽ gửi dữ liệu sạch tới: {CLEAN_TOPIC}")
-print(f"  - Sẽ gửi dữ liệu lỗi tới: {FAILED_TOPIC}")
 print("-" * 30)
 
-# 5. Vòng lặp vô tận để xử lý luồng
 try:
     for message in consumer:
-        # Nhận tin nhắn (dưới dạng dict)
         raw_data = message.value
         trans_id = raw_data.get('transID', 'Unknown')
+        clean_data = {}
+        errors_found = []
 
         try:
-            # 6. BẮT ĐẦU XỬ LÝ (Transformation)
-            #    Đây là "công việc" chính của Lớp 2
-            clean_data = {}
-
-            # Duyệt qua tất cả dữ liệu thô
+            # Bắt đầu xử lý từng cột
             for key, value in raw_data.items():
-                # Nếu giá trị là None hoặc chuỗi rỗng
-                if value is None or value == '':
-                    clean_data[key] = None
-                    continue
 
-                # Chuyển đổi sang INT (số nguyên)
-                if key in INT_COLS:
-                    clean_data[key] = int(value)
-                # Chuyển đổi sang FLOAT (số thực)
+                # 1. Nhóm FLOAT_TO_INT ("1.0" -> 1)
+                if key in FLOAT_TO_INT_COLS:
+                    # Chuyển thành float trước, rồi mới thành int
+                    clean_data[key] = safe_convert(value, lambda v: int(float(v)))
+
+                # 2. Nhóm INT ("12" -> 12)
+                elif key in INT_COLS:
+                    clean_data[key] = safe_convert(value, int)
+
+                # 3. Nhóm FLOAT ("-6.19" -> -6.19)
                 elif key in FLOAT_COLS:
-                    clean_data[key] = float(value)
-                # Giữ nguyên là chuỗi (string)
+                    clean_data[key] = safe_convert(value, float)
+
+                # 4. Nhóm TIMESTAMP (giữ nguyên là chuỗi, nhưng đảm bảo là None nếu rỗng)
+                elif key in TIMESTAMP_COLS:
+                    clean_data[key] = safe_convert(value, str)
+
+                # 5. Các cột CHUỖI còn lại (transID, payCardID, v.v.)
                 else:
-                    clean_data[key] = str(value) # Đảm bảo nó là string
+                    clean_data[key] = safe_convert(value, str)
 
-            # (Bạn có thể thêm các logic phức tạp hơn ở đây,
-            #  ví dụ: tính toán thời gian chuyến đi)
-
-            # 7. Gửi dữ liệu ĐÃ SẠCH đi
+            # Gửi dữ liệu ĐÃ SẠCH đi
             producer.send(CLEAN_TOPIC, value=clean_data)
             print(f"Đã xử lý (Sạch):   transID={trans_id}")
 
-        except ValueError as ve:
-            # 8. XỬ LÝ LỖI (Quan trọng)
-            #    Nếu một tin nhắn bị lỗi (ví dụ: 'payAmount' = 'abc')
-            #    Nó sẽ bị gửi sang topic FAILED
-            print(f"PHÁT HIỆN LỖI (Hỏng): transID={trans_id}, Lỗi: {ve}")
+        except Exception as e:
+            # Nếu có lỗi logic nào đó, gửi sang topic FAILED
+            print(f"PHÁT HIỆN LỖI (Hỏng): transID={trans_id}, Lỗi: {e}")
             failed_message = {
-                'error': str(ve),
+                'error': str(e),
                 'failed_at': datetime.now().isoformat(),
                 'original_message': raw_data
             }
@@ -112,7 +114,6 @@ try:
 except KeyboardInterrupt:
     print("Đã dừng processor.")
 finally:
-    # 9. Đóng kết nối
     print("Đang đóng consumer và producer...")
     consumer.close()
     producer.flush()
