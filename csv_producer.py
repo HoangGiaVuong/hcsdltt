@@ -27,12 +27,11 @@ except Exception as e:
 try:
     # 2. Đọc file CSV
     #    QUAN TRỌNG: dtype=str đọc TẤT CẢ mọi thứ dưới dạng chuỗi.
-    #    Việc này ngăn pandas tự ý chuyển đổi và ngăn lỗi crash.
     print(f"Đang đọc file {CSV_FILE}...")
-    df = pd.read_csv(CSV_FILE, dtype=str)
+    # Thêm 'low_memory=False' để tối ưu hóa việc đọc file CSV lớn
+    df = pd.read_csv(CSV_FILE, dtype=str, low_memory=False)
 
     # Thay thế các giá trị 'nan' (chuỗi 'nan' do pandas đọc) thành None (null)
-    # để JSON sạch hơn
     df = df.where(pd.notnull(df), None)
 
     print(f"Đọc thành công. Tìm thấy {len(df)} dòng.")
@@ -52,8 +51,7 @@ try:
         # 3. Lấy ngẫu nhiên 1 dòng
         sample_row = df.sample(n=1).iloc[0]
 
-        # 4. Chuyển thẳng sang dict. KHÔNG CẦN CHUYỂN ĐỔI GÌ CẢ.
-        #    Ví dụ: 'direction' sẽ là chuỗi "1.0"
+        # 4. Chuyển thẳng sang dict.
         data_to_send = sample_row.to_dict()
 
         # 5. Thêm timestamp
@@ -62,10 +60,12 @@ try:
         # 6. Gửi đi
         producer.send(KAFKA_TOPIC, value=data_to_send)
 
-        id_to_print = data_to_send.get('transID', '...')
+        # Cố gắng in một ID có ý nghĩa (nếu có)
+        id_to_print = data_to_send.get('tpep_pickup_datetime', '...')
         print(f"Đã gửi: {id_to_print}")
 
-        time.sleep(0.5)
+        # Dataset này lớn, chúng ta có thể gửi nhanh hơn
+        time.sleep(0.1) # 10 tin nhắn/giây
 
 except KeyboardInterrupt:
     print("Đã dừng giả lập.")

@@ -15,35 +15,38 @@ FAILED_TOPIC = config['TOPICS']['failed_output_topic']
 KAFKA_BROKERS = config['KAFKA']['bootstrap_servers']
 PROCESSOR_GROUP_ID = config['CONSUMER_GROUPS']['processor_group_id']
 
-# --- ĐỊNH NGHĨA CÁC NHÓM CỘT ĐỂ "DỌN DẸP" ---
-# (Dựa trên dữ liệu mẫu của bạn)
+# --- ĐỊNH NGHĨA CÁC NHÓM CỘT (Dataset Taxi) ---
 
 # Các cột sẽ được chuyển đổi: "1.0" -> 1 (int)
-FLOAT_TO_INT_COLS = ['direction', 'stopEndSeq', 'payAmount']
+# (Dùng float-to-int cho an toàn với dữ liệu CSV bẩn)
+FLOAT_TO_INT_COLS = ['VendorID', 'passenger_count', 'RateCodeID', 'payment_type']
 
-# Các cột sẽ được chuyển đổi: "12" -> 12 (int)
-INT_COLS = ['corridorID', 'stopStartSeq', 'payCardBirthDate'] # Thêm 'payCardBirthDate'
-
-# Các cột sẽ được chuyển đổi: "-6.193488" -> -6.193488 (float)
-FLOAT_COLS = ['tapInStopsLat', 'tapInStopsLon', 'tapOutStopsLat', 'tapOutStopsLon']
+# Các cột sẽ được chuyển đổi: "-73.9" -> -73.9 (float)
+FLOAT_COLS = [
+    'trip_distance', 'pickup_longitude', 'pickup_latitude',
+    'dropoff_longitude', 'dropoff_latitude', 'fare_amount', 'extra',
+    'mta_tax', 'tip_amount', 'tolls_amount', 'improvement_surcharge',
+    'total_amount'
+]
 
 # Các cột là TIMESTAMP (chuỗi ISO)
-TIMESTAMP_COLS = ['tapInTime', 'tapOutTime', 'produced_at']
+# Dataset 2015-01 dùng định dạng 'YYYY-MM-DD HH:MM:SS'
+TIMESTAMP_COLS = ['tpep_pickup_datetime', 'tpep_dropoff_datetime']
 
-# Các cột còn lại mặc định là TEXT/CHUỖI
+# Các cột là CHUỖI
+STRING_COLS = ['store_and_fwd_flag', 'produced_at'] # Thêm 'produced_at'
 
 # --- HÀM TIỆN ÍCH "AN TOÀN" ---
 def safe_convert(value, convert_func):
     """Hàm chung để thử chuyển đổi, nếu thất bại thì trả về None."""
-    if value is None or value == '':
+    if value is None or value == '' or value == 'nan':
         return None
     try:
         return convert_func(value)
     except (ValueError, TypeError):
-        # Nếu giá trị là "abc" nhưng yêu cầu là int, nó sẽ trả về None
         return None
 
-print("Khởi động Stream Processor (Phiên bản Thông minh)...")
+print("Khởi động Stream Processor (Taxi Dataset)...")
 
 try:
     consumer = KafkaConsumer(
@@ -68,9 +71,9 @@ print("-" * 30)
 try:
     for message in consumer:
         raw_data = message.value
-        trans_id = raw_data.get('transID', 'Unknown')
+        # Dùng thời gian pickup làm ID log
+        log_id = raw_data.get('tpep_pickup_datetime', 'Unknown')
         clean_data = {}
-        errors_found = []
 
         try:
             # Bắt đầu xử lý từng cột
@@ -78,32 +81,33 @@ try:
 
                 # 1. Nhóm FLOAT_TO_INT ("1.0" -> 1)
                 if key in FLOAT_TO_INT_COLS:
-                    # Chuyển thành float trước, rồi mới thành int
                     clean_data[key] = safe_convert(value, lambda v: int(float(v)))
 
-                # 2. Nhóm INT ("12" -> 12)
-                elif key in INT_COLS:
-                    clean_data[key] = safe_convert(value, int)
-
-                # 3. Nhóm FLOAT ("-6.19" -> -6.19)
+                # 2. Nhóm FLOAT ("-73.9" -> -73.9)
                 elif key in FLOAT_COLS:
                     clean_data[key] = safe_convert(value, float)
 
-                # 4. Nhóm TIMESTAMP (giữ nguyên là chuỗi, nhưng đảm bảo là None nếu rỗng)
+                # 3. Nhóm TIMESTAMP
                 elif key in TIMESTAMP_COLS:
+                    # Dữ liệu 2015 có định dạng '2015-01-15 19:05:39'
+                    # Postgres có thể đọc trực tiếp, chỉ cần đảm bảo nó là chuỗi
                     clean_data[key] = safe_convert(value, str)
 
-                # 5. Các cột CHUỖI còn lại (transID, payCardID, v.v.)
+                # 4. Các cột CHUỖI còn lại
+                elif key in STRING_COLS:
+                     clean_data[key] = safe_convert(value, str)
+
+                # 5. Bỏ qua các cột không xác định (nếu có)
                 else:
-                    clean_data[key] = safe_convert(value, str)
+                    continue
 
             # Gửi dữ liệu ĐÃ SẠCH đi
             producer.send(CLEAN_TOPIC, value=clean_data)
-            print(f"Đã xử lý (Sạch):   transID={trans_id}")
+            print(f"Đã xử lý (Sạch):   {log_id}")
 
         except Exception as e:
             # Nếu có lỗi logic nào đó, gửi sang topic FAILED
-            print(f"PHÁT HIỆN LỖI (Hỏng): transID={trans_id}, Lỗi: {e}")
+            print(f"PHÁT HIỆN LỖI (Hỏng): {log_id}, Lỗi: {e}")
             failed_message = {
                 'error': str(e),
                 'failed_at': datetime.now().isoformat(),

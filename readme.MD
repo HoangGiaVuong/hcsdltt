@@ -1,109 +1,153 @@
-# Bus Data Stream — Hướng dẫn chạy (Windows)
+# Pipeline Kho dữ liệu (Data Warehouse) Real-Time - Dữ liệu Taxi NYC
 
-Mô tả ngắn: tập hợp script Python để giả lập phát dữ liệu từ CSV vào Kafka, xử lý luồng và chèn vào PostgreSQL.
+## Tổng quan
+Dự án này là một pipeline xử lý dữ liệu luồng (streaming) 3 lớp hoàn chỉnh, được thiết kế để mô phỏng một Kho dữ liệu (Data Warehouse) thời gian thực.
 
-## Yêu cầu
-- Docker Desktop (Docker Compose)
+### Mục tiêu
+- Nạp (ingest) bộ dữ liệu "NYC Yellow Taxi" từ file CSV
+- Xử lý (process) dữ liệu theo thời gian thực qua Apache Kafka
+- Tải (load) dữ liệu vào một Lược đồ Hình sao (Star Schema) trong PostgreSQL
+
+> Hệ thống này được xây dựng làm "sân chơi" (sandbox) để thử nghiệm các kỹ thuật Tối ưu hóa Truy vấn Nâng cao (như Lập chỉ mục, Kế hoạch Thực thi Động, và giám sát ML) được mô tả trong bài báo nghiên cứu.
+
+## 🚀 Kiến trúc Hệ thống
+
+Pipeline bao gồm 3 lớp phần mềm, chạy song song và được kết nối bởi Apache Kafka.
+
+### Lớp 1: Ingestion (Thu thập) - csv_producer.py
+
+**Đầu vào:** Đọc file yellow_tripdata_2015-01.csv (hoặc file được định nghĩa trong config.ini)
+
+> **TẢI VỀ TỪ:** https://www.kaggle.com/datasets/elemento/nyc-yellow-taxi-trip-data/data
+
+**Công việc:**
+- Lấy mẫu (sample) các dòng ngẫu nhiên từ file
+- Đọc tất cả dữ liệu dưới dạng chuỗi (str) để đảm bảo an toàn
+- "Phát" (produce) tin nhắn JSON vào topic Kafka taxi_trips_raw
+
+**Mục đích:** Giả lập một nguồn dữ liệu "live" (trực tiếp) đang liên tục tạo ra các chuyến đi
+
+### Lớp 2: Processing (Xử lý) - stream_processor.py
+
+**Đầu vào:** Lắng nghe topic taxi_trips_raw
+
+**Công việc:**
+- Nhận các tin nhắn JSON thô
+- "Dọn dẹp" (clean) và "biến đổi" (transform) dữ liệu
+- Xử lý các kiểu dữ liệu và giá trị rỗng (nan)
+
+**Đầu ra:** Gửi dữ liệu đã sạch sang topic taxi_trips_clean
+
+### Lớp 3: Storage (Lưu trữ) - postgres_consumer.py
+
+**Đầu vào:** Lắng nghe topic taxi_trips_clean
+
+**Công việc:**
+- Thiết lập CSDL (Lần chạy đầu tiên)
+- Tạo Lược đồ Hình sao (Star Schema) gồm 6 bảng
+- Nạp Bảng Dim
+- Chạy liên tục và thực hiện INSERT hàng loạt
+
+## 📋 Yêu cầu Phần mềm
+
+- Docker và Docker Compose
 - Python 3.8+
-- PowerShell hoặc CMD (mở tại thư mục dự án)
+- File dữ liệu yellow_tripdata_2015-01.csv
 
-Đường dẫn dự án (ví dụ):
-f:\ThacSi\HCSDLTT\Đồ án
+## ⚙️ Cài đặt & Cấu hình
 
-## Chuẩn bị
-1. Mở PowerShell hoặc CMD tại thư mục dự án:
-   ```powershell
-   cd "f:\ThacSi\HCSDLTT\Đồ án"
-   ```
+### 1. Tải Dữ liệu
+Tải file yellow_tripdata_2015-01.csv và đặt vào thư mục dự án
 
-2. Tạo virtual environment và cài thư viện Python:
-   - Tạo & kích hoạt (PowerShell):
-     ```powershell
-     python -m venv .venv
-     .\.venv\Scripts\Activate.ps1
-     ```
-     (Nếu dùng CMD)
-     ```cmd
-     python -m venv .venv
-     .\.venv\Scripts\activate.bat
-     ```
-   - Tạo file `requirements.txt` với nội dung:
-     ```
-     kafka-python
-     pandas
-     psycopg2-binary
-     faker
-     ```
-   - Cài đặt:
-     ```powershell
-     pip install -r requirements.txt
-     ```
-
-3. Kiểm tra/ chỉnh config:
-   - Mở `config.ini` và đảm bảo:
-     - [KAFKA].bootstrap_servers = localhost:9092
-     - [POSTGRES] trùng với Docker Compose (user/admin, password/password123, database/bus_data_db)
-     - [APPLICATION_SETTINGS].csv_file_path trỏ tới file CSV (mặc định `source.csv`)
-
-4. Khởi động hạ tầng (Kafka + Zookeeper + Postgres):
-   ```powershell
-   docker compose up -d
-   ```
-   Chờ ~20-30 giây để các service sẵn sàng.
-
-## Thứ tự chạy script (mở nhiều Terminal)
-Mở các terminal trong cùng thư mục dự án và chạy theo thứ tự sau:
-
-1. Terminal 1 — Postgres consumer (chạy thứ 2 nhưng mở terminal trước):
-   ```powershell
-   python postgres_consumer.py
-   ```
-   (Chức năng: đọc topic clean và chèn batch vào Postgres)
-
-2. Terminal 2 — Stream processor:
-   ```powershell
-   python stream_processor.py
-   ```
-   (Chức năng: đọc topic raw, chuyển kiểu/dọn dữ liệu, publish sang topic clean hoặc failed)
-
-3. Terminal 3 — CSV producer (chạy cuối để bắt đầu phát dữ liệu):
-   ```powershell
-   python csv_producer.py
-   ```
-   (Chức năng: đọc `source.csv` hoặc file chỉ định trong config và gửi event tới Kafka)
-
-Ghi chú: Các script sẽ chờ message nếu không có dữ liệu. Đóng bằng Ctrl+C.
-
-## Kiểm tra dữ liệu trong Postgres
-Kết nối đến container Postgres và dùng psql:
-```powershell
-docker compose exec postgres psql -U admin -d bus_data_db
+### 2. Cài đặt Thư viện Python
+Tạo file requirements.txt:
 ```
-Trong psql:
+kafka-python
+pandas
+psycopg2-binary
+```
+
+Cài đặt thư viện:
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Kiểm tra Cấu hình (config.ini)
+- **[APPLICATION_SETTINGS]**: Cấu hình đường dẫn file CSV
+- **[POSTGRES]**: Cấu hình tên CSDL
+- **[TOPICS]**: Cấu hình tên các topic
+
+## ⚡ Hướng dẫn chạy
+
+### Terminal 1: Khởi động Hạ tầng
+```bash
+docker-compose up -d
+```
+
+### Terminal 2: Chạy Lớp 3 (Lưu trữ)
+```bash
+python postgres_consumer.py
+```
+
+### Terminal 3: Chạy Lớp 2 (Xử lý)
+```bash
+python stream_processor.py
+```
+
+### Terminal 4: Chạy Lớp 1 (Phát dữ liệu)
+```bash
+python csv_producer.py
+```
+
+### Terminal 5: Kiểm tra Kết quả
+```bash
+docker-compose exec postgres psql -U admin -d taxi_data_db
+```
+
+Các truy vấn kiểm tra:
 ```sql
-SELECT COUNT(*) FROM bus_logs;
-\q
+-- Đếm số dòng
+SELECT COUNT(*) FROM Fact_Trips;
+
+-- Kiểm tra Star Schema
+SELECT
+    p.payment_type_name,
+    COUNT(f.trip_id_pk) AS so_luong_chuyen
+FROM
+    Fact_Trips f
+JOIN
+    Dim_Payment_Type p ON f.payment_type_fk = p.payment_type_pk
+GROUP BY
+    p.payment_type_name
+ORDER BY
+    so_luong_chuyen DESC;
 ```
 
-## Dừng hạ tầng
-Khi xong, dừng và xóa container/volume:
-```powershell
-docker compose down -v
+## ⏹️ Dừng Hệ thống
+
+```bash
+docker-compose down
+# Hoặc xóa hoàn toàn volume:
+docker-compose down -v
 ```
 
-## Troubleshooting nhanh
-- Lỗi kết nối Kafka: kiểm tra `docker compose ps` và giá trị `bootstrap_servers` trong `config.ini` (nên là localhost:9092).
-- Producer báo không tìm file CSV: kiểm tra `csv_file_path` trong `config.ini` và đường dẫn file (`source.csv` hoặc `bus_data.csv`).
-- Postgres connection error: kiểm tra container postgres chạy, ports (5432), user/password trong `config.ini` và `docker-compose.yaml`.
-- Nếu gặp lỗi module thiếu: đảm bảo virtualenv đang active và đã pip install -r requirements.txt.
+## 🚀 Tối ưu hóa Truy vấn
 
-## Files chính
-- csv_producer.py — gửi dữ liệu từ CSV tới topic raw
-- stream_processor.py — xử lý & publish sang topic clean/failed
-- postgres_consumer.py — nhận dữ liệu clean và insert vào Postgres
-- config.ini — cấu hình Kafka / Postgres / topics / csv path
-- docker-compose.yaml — định nghĩa Kafka, Zookeeper, Postgres
-- source.csv / source_data_csv.py — dữ liệu mẫu / script sinh dữ liệu
+### 1. Phân tích Query
+```sql
+EXPLAIN ANALYZE
+SELECT ... -- câu query JOIN ở trên
+```
 
----
-Hướng dẫn này đủ để khởi chạy luồng dữ liệu cơ bản trên máy Windows. Nếu cần thay đổi chi tiết cấu hình (ports, credentials, file names) hãy chỉnh `config.ini` và `docker-compose.yaml`.
+### 2. Tạo Index
+```sql
+CREATE INDEX idx_fact_payment_fk ON Fact_Trips(payment_type_fk);
+```
+
+### 3. Giám sát Hiệu năng
+```sql
+SELECT total_exec_time, calls, mean_exec_time, query
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 10;
+```
