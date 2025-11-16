@@ -20,11 +20,11 @@ config.read('config.ini')
 
 # !!! QUAN TRỌNG: CẬP NHẬT THÔNG TIN CỦA BẠN VÀO ĐÂY !!!
 DB_CONFIG = {
-    "dbname": config['POSTGRESQL']['database'],
-    "user": config['POSTGRESQL']['user'],
-    "password": config['POSTGRESQL']['password'],
-    "host": config['POSTGRESQL']['host'], # Hoặc địa chỉ IP/hostname của server
-    "port": config['POSTGRESQL']['port']      # Cổng mặc định của Postgres
+    "dbname": config['POSTGRES']['database'],
+    "user": config['POSTGRES']['user'],
+    "password": config['POSTGRES']['password'],
+    "host": config['POSTGRES']['host'],
+    "port": config['POSTGRES']['port']
 }
 
 def get_db_connection():

@@ -9,17 +9,22 @@ import psycopg2.extras
 import time
 import random
 import re
-import xgboost as xgb # <<< THAY ĐỔI 1: Import XGBoost
+import xgboost as xgb
+import configparser
 
 # --- PHẦN 1: TƯƠNG TÁC VỚI CSDL POSTGRESQL ---
 
 # !!! QUAN TRỌNG: CẬP NHẬT THÔNG TIN CỦA BẠN VÀO ĐÂY !!!
+
+config = configparser.ConfigParser()
+config.read('config.ini')
+
 DB_CONFIG = {
-    "dbname": "ten_database_cua_ban",
-    "user": "username_cua_ban",
-    "password": "password_cua_ban",
-    "host": "localhost", # Hoặc địa chỉ IP/hostname của server
-    "port": "5432"      # Cổng mặc định của Postgres
+    "dbname": config['POSTGRES']['database'],
+    "user": config['POSTGRES']['user'],
+    "password": config['POSTGRES']['password'],
+    "host": config['POSTGRES']['host'],
+    "port": config['POSTGRES']['port']
 }
 
 def get_db_connection():
@@ -271,7 +276,7 @@ if __name__ == "__main__":
 
     # BƯỚC 1: TẠO DỮ LIỆU HUẤN LUYỆN TỪ CSDL
     # (Bạn có thể comment dòng này nếu đã có file log)
-    historical_logs_df = generate_historical_logs(n_samples=2000)
+    historical_logs_df = generate_historical_logs(n_samples=10000)
 
     # Lưu log lại để không phải tạo lại
     if not historical_logs_df.empty:
