@@ -35,9 +35,15 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     # Kích hoạt extension 'pg_stat_statements' khi khởi động
     # Đây là bước cần thiết cho phần tối ưu hóa ML
-    command: postgres -c shared_preload_libraries=pg_stat_statements
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
 
 # Định nghĩa volume để dữ liệu Postgres không bị mất khi container tắt
 volumes:

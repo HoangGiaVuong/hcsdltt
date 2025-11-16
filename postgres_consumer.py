@@ -29,6 +29,19 @@ BATCH_TIMEOUT = int(config['APPLICATION_SETTINGS']['batch_timeout_seconds'])
 # Các cột Timestamp
 TIMESTAMP_COLS = ['tpep_pickup_datetime', 'tpep_dropoff_datetime', 'produced_at']
 
+# --- BỘ LỌC DỌN DẸP KHÓA NGOẠI ---
+# Chúng ta định nghĩa các ID hợp lệ dựa trên hàm setup_database
+VALID_VENDORS = {1, 2}
+VALID_PAYMENTS = {1, 2, 3, 4, 5, 6}
+VALID_RATES = {1, 2, 3, 4, 5, 6}
+
+# Chúng ta định nghĩa các giá trị "Mặc định" (Default) nếu dữ liệu bẩn
+# (Phải là các giá trị hợp lệ ở trên)
+DEFAULT_VENDOR = 1
+DEFAULT_PAYMENT = 5 # ID 5 là 'Unknown'
+DEFAULT_RATE = 5    # ID 5 là 'Negotiated fare' (gần với 'Unknown')
+# ------------------------------------
+
 def get_pg_connection():
     """Hàm tiện ích để kết nối tới Postgres."""
     try:
@@ -285,6 +298,22 @@ def main():
             for ts_col in TIMESTAMP_COLS:
                 if ts_col in clean_data and (clean_data[ts_col] == '' or clean_data[ts_col] is None):
                     clean_data[ts_col] = None
+
+            # --- BƯỚC DỌN DẸP KHÓA NGOẠI (MỚI) ---
+            # (Chúng ta dọn dẹp các tên cột TỪ LỚP 2 gửi đến)
+
+            # 1. Dọn dẹp VendorID
+            if clean_data.get('VendorID') not in VALID_VENDORS:
+                clean_data['VendorID'] = DEFAULT_VENDOR
+
+            # 2. Dọn dẹp payment_type
+            if clean_data.get('payment_type') not in VALID_PAYMENTS:
+                clean_data['payment_type'] = DEFAULT_PAYMENT
+
+            # 3. Dọn dẹp RateCodeID (Đây là cái gây lỗi 99)
+            if clean_data.get('RateCodeID') not in VALID_RATES:
+                clean_data['RateCodeID'] = DEFAULT_RATE
+            # --------------------------------------------
 
             batch.append(clean_data)
 
